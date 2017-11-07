@@ -25,8 +25,9 @@ class InformationViewController: UIViewController {
     }
     
     @objc func setLabels(){
-        
-        informationLbl.text = "\(DataService.shared.productURL)"
+        if let description = DataService.shared.productDescription {
+            informationLbl.text = "\(description)"
+        }
     }
 
 }

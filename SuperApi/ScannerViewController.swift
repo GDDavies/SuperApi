@@ -11,134 +11,81 @@ import AVFoundation
 
 class ScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
 
-    var session: AVCaptureSession!
+    var captureSession: AVCaptureSession!
     var previewLayer: AVCaptureVideoPreviewLayer!
+    var barcodeFrameView: UIView?
     
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // Create a session object.
-        session = AVCaptureSession()
-        
-        // Set the captureDevice.
-        let videoCaptureDevice = AVCaptureDevice.default(for: AVMediaType.video)
-        
-        // Create input object.
-        let videoInput: AVCaptureDeviceInput?
+        // Get an instance of the AVCaptureDevice class to initialize a device object and provide the video as the media type parameter.
+        let captureDevice = AVCaptureDevice.default(for: AVMediaType.video)
         
         do {
-            videoInput = try AVCaptureDeviceInput(device: videoCaptureDevice!)
+            
+            // Initialize QR Code Frame to highlight the QR code
+            barcodeFrameView = UIView()
+            
+            if let barcodeFrameView = barcodeFrameView {
+                barcodeFrameView.layer.borderColor = UIColor.green.cgColor
+                barcodeFrameView.layer.borderWidth = 2
+                view.addSubview(barcodeFrameView)
+                view.bringSubview(toFront: barcodeFrameView)
+            }
+            
+            // Get an instance of the AVCaptureDeviceInput class using the previous device object.
+            let input = try AVCaptureDeviceInput(device: captureDevice!)
+            
+            // Initialize the captureSession object.
+            captureSession = AVCaptureSession()
+            
+            // Set the input device on the capture session.
+            captureSession?.addInput(input)
+            
+            // Initialize a AVCaptureMetadataOutput object and set it as the output device to the capture session.
+            let captureMetadataOutput = AVCaptureMetadataOutput()
+            captureSession?.addOutput(captureMetadataOutput)
+            
+            // Set delegate and use the default dispatch queue to execute the call back
+            captureMetadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
+            captureMetadataOutput.metadataObjectTypes = [AVMetadataObject.ObjectType.ean13]
+            
+            // Initialize the video preview layer and add it as a sublayer to the viewPreview view's layer.
+            previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
+            previewLayer?.videoGravity = AVLayerVideoGravity.resizeAspectFill
+            previewLayer?.frame = view.layer.bounds
+            view.layer.addSublayer(previewLayer!)
+            
+            // Start video capture.
+            captureSession?.startRunning()
+            
         } catch {
+            // If any error occurs, simply print it out and don't continue any more.
+            print(error)
+            return
+        }
+    }
+    
+    func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        // Check if the metadataObjects array is not nil and it contains at least one object.
+        if metadataObjects == nil || metadataObjects.count == 0 {
+            barcodeFrameView?.frame = CGRect.zero
+            print("No QR code is detected")
             return
         }
         
-        // Add input to the session.
-        if (session.canAddInput(videoInput!)) {
-            session.addInput(videoInput!)
-        } else {
-            scanningNotPossible()
-        }
+        // Get the metadata object.
+        let metadataObj = metadataObjects[0] as! AVMetadataMachineReadableCodeObject
         
-        // Create output object.
-        let metadataOutput = AVCaptureMetadataOutput()
-        
-        // Add output to the session.
-        if (session.canAddOutput(metadataOutput)) {
-            session.addOutput(metadataOutput)
+        if metadataObj.type == AVMetadataObject.ObjectType.ean13 {
+            // If the found metadata is equal to the QR code metadata then update the status label's text and set the bounds
+            let barCodeObject = previewLayer?.transformedMetadataObject(for: metadataObj)
+            barcodeFrameView?.frame = barCodeObject!.bounds
             
-            // Send captured data to the delegate object via a serial queue.
-            metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
-            
-            // Set barcode type for which to scan: EAN-13.
-            metadataOutput.metadataObjectTypes = [AVMetadataObject.ObjectType.ean13]
-            
-        } else {
-            scanningNotPossible()
-        }
-        
-        // Add previewLayer and have it show the video data.
-        previewLayer = AVCaptureVideoPreviewLayer(session: session)
-        previewLayer.frame = view.layer.bounds
-        previewLayer.videoGravity = AVLayerVideoGravity.resizeAspectFill
-        view.layer.addSublayer(previewLayer)
-        
-        // Begin the capture session.
-        
-        session.startRunning()
-    }
-    
-    override func viewWillAppear(_ animated: Bool) {
-        
-        super.viewWillAppear(animated)
-        if (session?.isRunning == false) {
-            session.startRunning()
-        }
-    }
-    
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        
-        if (session?.isRunning == true) {
-            session.stopRunning()
-        }
-    }
-    
-    func scanningNotPossible() {
-        // Let the user know that scanning isn't possible with the current device.
-        let alert = UIAlertController(title: "Can't Scan.", message: "Let's try a device equipped with a camera.", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
-        present(alert, animated: true, completion: nil)
-        session = nil
-    }
-    
-    func captureOutput(captureOutput: AVCaptureOutput!, didOutputMetadataObjects metadataObjects: [AnyObject]!, fromConnection connection: AVCaptureConnection!) {
-        
-        // Get the first object from the metadataObjects array.
-        if let barcodeData = metadataObjects.first {
-            // Turn it into machine readable code
-            let barcodeReadable = barcodeData as? AVMetadataMachineReadableCodeObject;
-            if let readableCode = barcodeReadable {
-                // Send the barcode as a string to barcodeDetected()
-                barcodeDetected(code: readableCode.stringValue!)
+            if metadataObj.stringValue != nil {
+                DataService.shared.searchAPI(gtin: metadataObj.stringValue!)
+                print(metadataObj.stringValue)
             }
-            
-            // Vibrate the device to give the user some feedback.
-            AudioServicesPlaySystemSound(SystemSoundID(kSystemSoundID_Vibrate))
-            
-            // Avoid a very buzzy device.
-            session.stopRunning()
         }
-    }
-    
-    func barcodeDetected(code: String) {
-        
-        // Let the user know we've found something.
-        let alert = UIAlertController(title: "Found a Barcode!", message: code, preferredStyle: UIAlertControllerStyle.alert)
-        alert.addAction(UIAlertAction(title: "Search", style: UIAlertActionStyle.destructive, handler: { action in
-            
-            // Remove the spaces.
-            let trimmedCode = code.trimmingCharacters(in: CharacterSet.whitespaces)
-            
-            // EAN or UPC?
-            // Check for added "0" at beginning of code.
-            
-            let trimmedCodeString = "\(trimmedCode)"
-            var trimmedCodeNoZero: String
-            
-            if trimmedCodeString.hasPrefix("0") && trimmedCodeString.characters.count > 1 {
-                trimmedCodeNoZero = String(trimmedCodeString.characters.dropFirst())
-                
-                // Send the doctored UPC to DataService.searchAPI()
-                DataService.searchAPI(gtin: trimmedCodeNoZero)
-            } else {
-                
-                // Send the doctored EAN to DataService.searchAPI()
-                DataService.searchAPI(gtin: trimmedCodeString)
-            }
-            
-            self.navigationController?.popViewController(animated: true)
-        }))
-        
-        self.present(alert, animated: true, completion: nil)
     }
 }
